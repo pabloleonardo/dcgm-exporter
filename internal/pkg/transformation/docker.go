@@ -48,6 +48,12 @@ type ContainerInfo struct {
 	Labels map[string]string
 }
 
+type GPUProcessContainer struct {
+	PID         int
+	GPUID       string
+	ContainerID string
+}
+
 const (
 	cgroupV1NvidiaPath = "/sys/fs/cgroup/devices/docker"
 	cgroupV2NvidiaPath = "/sys/fs/cgroup"
@@ -84,7 +90,7 @@ func (d *DockerMapper) Process(metrics collector.MetricsByCounter, deviceInfo de
 		return d.processUsingCgroups(metrics, deviceInfo)
 	}
 
-	return d.processUsingDockerAPI(metrics, deviceInfo)
+	return d.processUsingGPUProcessMapping(metrics, deviceInfo)
 }
 
 func (d *DockerMapper) initDockerClient() error {
@@ -169,6 +175,95 @@ func (d *DockerMapper) processUsingCgroups(metrics collector.MetricsByCounter, d
 	}
 
 	return d.addContainerLabelsToMetrics(metrics, containerInfo)
+}
+
+func (d *DockerMapper) processUsingGPUProcessMapping(metrics collector.MetricsByCounter, deviceInfo deviceinfo.Provider) error {
+	// Get all GPU processes and map them to containers
+	gpuProcessContainers, err := d.getGPUProcessContainers()
+	if err != nil {
+		logrus.Warnf("Failed to map GPU processes to containers: %v", err)
+		// Fallback to using the exporter's own container info
+		return d.processUsingDockerAPI(metrics, deviceInfo)
+	}
+
+	// If no GPU processes found or mapped, use the exporter's container info as fallback
+	if len(gpuProcessContainers) == 0 {
+		logrus.Debug("No GPU processes found, using exporter container info")
+		return d.processUsingDockerAPI(metrics, deviceInfo)
+	}
+
+	// For each GPU device in metrics, try to find the corresponding container
+	for counter, metricList := range metrics {
+		for i := range metricList {
+			// Get the GPU ID from the metric attributes
+			gpuID := metricList[i].Attributes["gpu"]
+			if gpuID == "" {
+				continue
+			}
+
+			// Find container info for this GPU
+			var containerInfo ContainerInfo
+			var found bool
+
+			// Look for a container using this specific GPU
+			for _, procContainer := range gpuProcessContainers {
+				if procContainer.GPUID == gpuID {
+					if existingContainer, exists := d.containerInfo[procContainer.ContainerID]; exists {
+						containerInfo = existingContainer
+						found = true
+						break
+					}
+				}
+			}
+
+			// If no specific container found for this GPU, use the first available GPU process container
+			if !found && len(gpuProcessContainers) > 0 {
+				if existingContainer, exists := d.containerInfo[gpuProcessContainers[0].ContainerID]; exists {
+					containerInfo = existingContainer
+					found = true
+				}
+			}
+
+			// If still no container found, create a minimal one from the process info
+			if !found && len(gpuProcessContainers) > 0 {
+				containerInfo = ContainerInfo{
+					ID:     gpuProcessContainers[0].ContainerID,
+					Name:   gpuProcessContainers[0].ContainerID[:12],
+					Labels: make(map[string]string),
+				}
+				found = true
+			}
+
+			// Apply container info to metrics
+			if found {
+				if metricList[i].Attributes == nil {
+					metricList[i].Attributes = make(map[string]string)
+				}
+
+				if !d.Config.UseOldNamespace {
+					metricList[i].Attributes[containerAttribute] = containerInfo.Name
+				} else {
+					metricList[i].Attributes[oldContainerAttribute] = containerInfo.Name
+				}
+
+				metricList[i].Attributes["container_id"] = containerInfo.ID
+
+				for labelKey, labelValue := range containerInfo.Labels {
+					if d.Config.DockerEnableContainerLabels {
+						sanitizedKey := d.sanitizeLabelKey(labelKey)
+						metricList[i].Attributes[sanitizedKey] = labelValue
+					}
+				}
+			}
+		}
+
+		if len(gpuProcessContainers) > 0 {
+			logrus.Debugf("Mapped %d metrics for counter %s to GPU process containers", 
+				len(metricList), counter)
+		}
+	}
+
+	return nil
 }
 
 func (d *DockerMapper) getCurrentContainerID() (string, error) {
@@ -307,4 +402,140 @@ func (d *DockerMapper) parseDevicesList(devicesFile string) ([]string, error) {
 	}
 
 	return devices, scanner.Err()
+}
+
+func (d *DockerMapper) getGPUProcessContainers() ([]GPUProcessContainer, error) {
+	var result []GPUProcessContainer
+
+	// Get all processes in /proc
+	procDir, err := stdos.Open("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open /proc: %w", err)
+	}
+	defer procDir.Close()
+
+	entries, err := procDir.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read /proc directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Check if directory name is a PID (numeric)
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+
+		// Check if this process is using GPU
+		gpuID, isUsingGPU := d.isProcessUsingGPU(pid)
+		if !isUsingGPU {
+			continue
+		}
+
+		// Get container ID for this PID
+		containerID, err := d.getContainerIDForPID(pid)
+		if err != nil {
+			logrus.Debugf("Could not get container ID for PID %d: %v", pid, err)
+			continue
+		}
+
+		// Skip if it's the exporter's own container (avoid self-reporting)
+		exporterContainerID, _ := d.getCurrentContainerID()
+		if containerID == exporterContainerID {
+			continue
+		}
+
+		result = append(result, GPUProcessContainer{
+			PID:         pid,
+			GPUID:       gpuID,
+			ContainerID: containerID,
+		})
+	}
+
+	logrus.Debugf("Found %d GPU processes in containers", len(result))
+	return result, nil
+}
+
+func (d *DockerMapper) getContainerIDForPID(pid int) (string, error) {
+	cgroupPath := fmt.Sprintf("/proc/%d/cgroup", pid)
+	file, err := stdos.Open(cgroupPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open %s: %w", cgroupPath, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		
+		if matches := dockerContainerIDRegex.FindStringSubmatch(line); len(matches) > 1 {
+			return matches[1], nil
+		}
+		
+		if matches := cgroupV2ContainerRegex.FindStringSubmatch(line); len(matches) > 1 {
+			return matches[1], nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("error reading %s: %w", cgroupPath, err)
+	}
+
+	return "", fmt.Errorf("could not find Docker container ID in cgroups for PID %d", pid)
+}
+
+func (d *DockerMapper) isProcessUsingGPU(pid int) (string, bool) {
+	// Check if process has opened nvidia device files
+	fdDir := fmt.Sprintf("/proc/%d/fd", pid)
+	entries, err := stdos.ReadDir(fdDir)
+	if err != nil {
+		return "", false
+	}
+
+	for _, entry := range entries {
+		linkPath := filepath.Join(fdDir, entry.Name())
+		target, err := stdos.Readlink(linkPath)
+		if err != nil {
+			continue
+		}
+
+		// Check if the process has opened nvidia device files
+		if strings.Contains(target, "/dev/nvidia") {
+			// Extract GPU ID from device file (e.g., /dev/nvidia0 -> "0")
+			if strings.HasPrefix(target, "/dev/nvidia") && len(target) > 11 {
+				gpuID := target[11:] // Extract everything after "/dev/nvidia"
+				// Handle cases like /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-uvm
+				if gpuID != "ctl" && gpuID != "-uvm" && gpuID != "-uvm-tools" {
+					// Try to parse as number to validate it's a GPU ID
+					if _, err := strconv.Atoi(gpuID); err == nil {
+						return gpuID, true
+					}
+				}
+			}
+		}
+	}
+
+	// Also check /proc/pid/maps for nvidia libraries
+	mapsPath := fmt.Sprintf("/proc/%d/maps", pid)
+	file, err := stdos.Open(mapsPath)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "libnvidia") || strings.Contains(line, "libcuda") {
+			// If we find GPU libraries but couldn't determine specific GPU ID,
+			// return "0" as default (most systems have GPU 0)
+			return "0", true
+		}
+	}
+
+	return "", false
 }
