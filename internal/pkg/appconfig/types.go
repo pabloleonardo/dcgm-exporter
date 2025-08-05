@@ -37,35 +37,37 @@ type DumpConfig struct {
 }
 
 type Config struct {
-	CollectorsFile             string
-	Address                    string
-	CollectInterval            int
-	Kubernetes                 bool
-	KubernetesEnablePodLabels  bool
-	KubernetesGPUIdType        KubernetesGPUIDType
-	CollectDCP                 bool
-	UseOldNamespace            bool
-	UseRemoteHE                bool
-	RemoteHEInfo               string
-	GPUDeviceOptions           DeviceOptions
-	SwitchDeviceOptions        DeviceOptions
-	CPUDeviceOptions           DeviceOptions
-	NoHostname                 bool
-	UseFakeGPUs                bool
-	ConfigMapData              string
-	MetricGroups               []dcgm.MetricGroup
-	WebSystemdSocket           bool
-	WebConfigFile              string
-	XIDCountWindowSize         int
-	ReplaceBlanksInModelName   bool
-	Debug                      bool
-	ClockEventsCountWindowSize int
-	EnableDCGMLog              bool
-	DCGMLogLevel               string
-	PodResourcesKubeletSocket  string
-	HPCJobMappingDir           string
-	NvidiaResourceNames        []string
-	KubernetesVirtualGPUs      bool
-	DumpConfig                 DumpConfig // Configuration for file-based dumps
-	KubernetesEnableDRA        bool
+	CollectorsFile               string
+	Address                      string
+	CollectInterval              int
+	Kubernetes                   bool
+	KubernetesEnablePodLabels    bool
+	KubernetesGPUIdType          KubernetesGPUIDType
+	Docker                       bool
+	DockerEnableContainerLabels  bool
+	CollectDCP                   bool
+	UseOldNamespace              bool
+	UseRemoteHE                  bool
+	RemoteHEInfo                 string
+	GPUDeviceOptions             DeviceOptions
+	SwitchDeviceOptions          DeviceOptions
+	CPUDeviceOptions             DeviceOptions
+	NoHostname                   bool
+	UseFakeGPUs                  bool
+	ConfigMapData                string
+	MetricGroups                 []dcgm.MetricGroup
+	WebSystemdSocket             bool
+	WebConfigFile                string
+	XIDCountWindowSize           int
+	ReplaceBlanksInModelName     bool
+	Debug                        bool
+	ClockEventsCountWindowSize   int
+	EnableDCGMLog                bool
+	DCGMLogLevel                 string
+	PodResourcesKubeletSocket    string
+	HPCJobMappingDir             string
+	NvidiaResourceNames          []string
+	KubernetesVirtualGPUs        bool
+	DumpConfig                   DumpConfig // Configuration for file-based dumps
+	KubernetesEnableDRA          bool
 }
