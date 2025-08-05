@@ -65,38 +65,40 @@ const (
 )
 
 const (
-	CLIFieldsFile                 = "collectors"
-	CLIAddress                    = "address"
-	CLICollectInterval            = "collect-interval"
-	CLIKubernetes                 = "kubernetes"
-	CLIKubernetesEnablePodLabels  = "kubernetes-enable-pod-labels"
-	CLIKubernetesGPUIDType        = "kubernetes-gpu-id-type"
-	CLIUseOldNamespace            = "use-old-namespace"
-	CLIRemoteHEInfo               = "remote-hostengine-info"
-	CLIGPUDevices                 = "devices"
-	CLISwitchDevices              = "switch-devices"
-	CLICPUDevices                 = "cpu-devices"
-	CLINoHostname                 = "no-hostname"
-	CLIUseFakeGPUs                = "fake-gpus"
-	CLIConfigMapData              = "configmap-data"
-	CLIWebSystemdSocket           = "web-systemd-socket"
-	CLIWebConfigFile              = "web-config-file"
-	CLIXIDCountWindowSize         = "xid-count-window-size"
-	CLIReplaceBlanksInModelName   = "replace-blanks-in-model-name"
-	CLIDebugMode                  = "debug"
-	CLIClockEventsCountWindowSize = "clock-events-count-window-size"
-	CLIEnableDCGMLog              = "enable-dcgm-log"
-	CLIDCGMLogLevel               = "dcgm-log-level"
-	CLILogFormat                  = "log-format"
-	CLIPodResourcesKubeletSocket  = "pod-resources-kubelet-socket"
-	CLIHPCJobMappingDir           = "hpc-job-mapping-dir"
-	CLINvidiaResourceNames        = "nvidia-resource-names"
-	CLIKubernetesVirtualGPUs      = "kubernetes-virtual-gpus"
-	CLIDumpEnabled                = "dump-enabled"
-	CLIDumpDirectory              = "dump-directory"
-	CLIDumpRetention              = "dump-retention"
-	CLIDumpCompression            = "dump-compression"
-	CLIKubernetesEnableDRA        = "kubernetes-enable-dra"
+	CLIFieldsFile                   = "collectors"
+	CLIAddress                      = "address"
+	CLICollectInterval              = "collect-interval"
+	CLIKubernetes                   = "kubernetes"
+	CLIKubernetesEnablePodLabels    = "kubernetes-enable-pod-labels"
+	CLIKubernetesGPUIDType          = "kubernetes-gpu-id-type"
+	CLIDocker                       = "docker"
+	CLIDockerEnableContainerLabels  = "docker-enable-container-labels"
+	CLIUseOldNamespace              = "use-old-namespace"
+	CLIRemoteHEInfo                 = "remote-hostengine-info"
+	CLIGPUDevices                   = "devices"
+	CLISwitchDevices                = "switch-devices"
+	CLICPUDevices                   = "cpu-devices"
+	CLINoHostname                   = "no-hostname"
+	CLIUseFakeGPUs                  = "fake-gpus"
+	CLIConfigMapData                = "configmap-data"
+	CLIWebSystemdSocket             = "web-systemd-socket"
+	CLIWebConfigFile                = "web-config-file"
+	CLIXIDCountWindowSize           = "xid-count-window-size"
+	CLIReplaceBlanksInModelName     = "replace-blanks-in-model-name"
+	CLIDebugMode                    = "debug"
+	CLIClockEventsCountWindowSize   = "clock-events-count-window-size"
+	CLIEnableDCGMLog                = "enable-dcgm-log"
+	CLIDCGMLogLevel                 = "dcgm-log-level"
+	CLILogFormat                    = "log-format"
+	CLIPodResourcesKubeletSocket    = "pod-resources-kubelet-socket"
+	CLIHPCJobMappingDir             = "hpc-job-mapping-dir"
+	CLINvidiaResourceNames          = "nvidia-resource-names"
+	CLIKubernetesVirtualGPUs        = "kubernetes-virtual-gpus"
+	CLIDumpEnabled                  = "dump-enabled"
+	CLIDumpDirectory                = "dump-directory"
+	CLIDumpRetention                = "dump-retention"
+	CLIDumpCompression              = "dump-compression"
+	CLIKubernetesEnableDRA          = "kubernetes-enable-dra"
 )
 
 func NewApp(buildVersion ...string) *cli.App {
@@ -143,6 +145,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES"},
 		},
 		&cli.BoolFlag{
+			Name:    CLIDocker,
+			Value:   false,
+			Usage:   "Enable docker mapping metrics to docker containers",
+			EnvVars: []string{"DCGM_EXPORTER_DOCKER"},
+		},
+		&cli.BoolFlag{
 			Name:    CLIUseOldNamespace,
 			Aliases: []string{"o"},
 			Value:   false,
@@ -175,6 +183,12 @@ func NewApp(buildVersion ...string) *cli.App {
 			Value:   false,
 			Usage:   "Enable kubernetes pod labels in metrics. This parameter is effective only when the '--kubernetes' option is set to 'true'.",
 			EnvVars: []string{"DCGM_EXPORTER_KUBERNETES_ENABLE_POD_LABELS"},
+		},
+		&cli.BoolFlag{
+			Name:    CLIDockerEnableContainerLabels,
+			Value:   false,
+			Usage:   "Enable docker container labels in metrics. This parameter is effective only when the '--docker' option is set to 'true'.",
+			EnvVars: []string{"DCGM_EXPORTER_DOCKER_ENABLE_CONTAINER_LABELS"},
 		},
 		&cli.StringFlag{
 			Name:  CLIKubernetesGPUIDType,
@@ -675,12 +689,14 @@ func contextToConfig(c *cli.Context) (*appconfig.Config, error) {
 	}
 
 	return &appconfig.Config{
-		CollectorsFile:             c.String(CLIFieldsFile),
-		Address:                    c.String(CLIAddress),
-		CollectInterval:            c.Int(CLICollectInterval),
-		Kubernetes:                 c.Bool(CLIKubernetes),
-		KubernetesEnablePodLabels:  c.Bool(CLIKubernetesEnablePodLabels),
-		KubernetesGPUIdType:        appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		CollectorsFile:               c.String(CLIFieldsFile),
+		Address:                      c.String(CLIAddress),
+		CollectInterval:              c.Int(CLICollectInterval),
+		Kubernetes:                   c.Bool(CLIKubernetes),
+		KubernetesEnablePodLabels:    c.Bool(CLIKubernetesEnablePodLabels),
+		KubernetesGPUIdType:          appconfig.KubernetesGPUIDType(c.String(CLIKubernetesGPUIDType)),
+		Docker:                       c.Bool(CLIDocker),
+		DockerEnableContainerLabels:  c.Bool(CLIDockerEnableContainerLabels),
 		CollectDCP:                 true,
 		UseOldNamespace:            c.Bool(CLIUseOldNamespace),
 		UseRemoteHE:                c.IsSet(CLIRemoteHEInfo),
